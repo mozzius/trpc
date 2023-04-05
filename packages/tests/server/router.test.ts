@@ -3,7 +3,7 @@ import { ignoreErrors } from './___testHelpers';
 import { initTRPC } from '@trpc/server/src/core';
 import { z } from 'zod';
 
-const t = initTRPC.create();
+export const t = initTRPC.create();
 
 describe('reserved words', () => {
   test('`then` is a reserved word', async () => {
@@ -169,5 +169,37 @@ describe('shorthand {}', () => {
         },
       });
     });
+  });
+});
+
+describe('lazy routers', () => {
+  test('can import lazy procedure', async () => {
+    const router = t.router({
+      foo: import('./lazy-helpers/procedure'),
+    });
+
+    const caller = router.createCaller({});
+    const result = await caller.foo();
+    expect(result).toBe('zzz');
+  });
+
+  test('can import lazy router', async () => {
+    const router = t.router({
+      foo: import('./lazy-helpers/router'),
+    });
+
+    const caller = router.createCaller({});
+    const result = await caller.foo.bar();
+    expect(result).toBe('Hello I am recursive');
+  });
+
+  test('can import lazy procedure nested in lazy router', async () => {
+    const router = t.router({
+      foo: import('./lazy-helpers/nested'),
+    });
+
+    const caller = router.createCaller({});
+    const result = await caller.foo.bar();
+    expect(result).toBe('Hello I am recursive');
   });
 });
