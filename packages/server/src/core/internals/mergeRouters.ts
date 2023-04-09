@@ -34,6 +34,7 @@ export type MergeRouters<
         mutations: TRouterDef['mutations'] & Head['_def']['mutations'];
         subscriptions: TRouterDef['subscriptions'] &
           Head['_def']['subscriptions'];
+        resolver: TRouterDef['resolver'] & Head['_def']['resolver'];
       }
     >
   : Router<TRouterDef> & TRouterDef['record'];

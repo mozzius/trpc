@@ -56,6 +56,7 @@ export interface RouterDef<
   router: true;
   procedures: TRecord;
   record: TRecord;
+  resolver: RouteResolver<any>;
   /**
    * V9 queries
    * @deprecated
@@ -191,6 +192,81 @@ export type CreateRouterInner<
    * @deprecated
    */ TProcRouterRecord;
 
+class RouteResolver<
+  TCreateRouterInner extends (
+    value: ProcedureRouterRecord,
+  ) => CreateRouterInner<any, any> = any,
+> {
+  map: Map<string, AnyProcedure> = new Map();
+  record: ProcedureRouterRecord = {};
+  createRouterInner: TCreateRouterInner;
+
+  constructor(createRouterInner: TCreateRouterInner) {
+    this.createRouterInner = createRouterInner;
+  }
+
+  add(procedures: ProcedureRouterRecord) {
+    for (const [key, procedureOrRouter] of Object.entries(procedures ?? {})) {
+      const value = procedures[key] ?? {};
+
+      if (isNestedRouter(value)) {
+        this.record[key] = this.createRouterInner(value);
+        continue;
+      }
+
+      if (isRouter(value)) {
+        this.record[key] = procedureOrRouter;
+        continue;
+      }
+
+      this.record[key] = procedureOrRouter;
+    }
+
+    this.recursiveGetPaths(this.record);
+  }
+
+  recursiveGetPaths(procedures: ProcedureRouterRecord, path = '') {
+    for (const [key, procedureOrRouter] of Object.entries(procedures ?? {})) {
+      const newPath = `${path}${key}`;
+
+      if (isNestedRouter(procedureOrRouter)) {
+        this.recursiveGetPaths(procedureOrRouter, `${newPath}.`);
+        continue;
+      }
+
+      if (isRouter(procedureOrRouter)) {
+        this.recursiveGetPaths(
+          procedureOrRouter._def.resolver.procedures,
+          `${newPath}.`,
+        );
+        continue;
+      }
+
+      if (this.map.has(newPath)) {
+        throw new Error(`Duplicate key: ${newPath}`);
+      }
+
+      this.map.set(newPath, procedureOrRouter);
+    }
+  }
+
+  get procedures() {
+    // map to plain object
+    return omitPrototype(Object.fromEntries(this.map));
+  }
+
+  resolve(path: string) {
+    const procedure = this.map.get(path);
+    if (!procedure) {
+      throw new TRPCError({
+        code: 'NOT_FOUND',
+        message: `Path "${path}" has no procedure`,
+      });
+    }
+    return procedure;
+  }
+}
+
 /**
  * @internal
  */
@@ -212,66 +288,30 @@ export function createRouterFactory<TConfig extends AnyRootConfig>(
       );
     }
 
-    const newProcedures: ProcedureRouterRecord = {};
-    for (const [key, procedureOrRouter] of Object.entries(procedures ?? {})) {
-      const value = procedures[key] ?? {};
+    const resolver = new RouteResolver(createRouterInner);
 
-      if (isNestedRouter(value)) {
-        newProcedures[key] = createRouterInner(value);
-        continue;
-      }
-
-      if (isRouter(value)) {
-        newProcedures[key] = procedureOrRouter;
-        continue;
-      }
-
-      newProcedures[key] = procedureOrRouter;
-    }
-
-    const routerProcedures: ProcedureRecord = omitPrototype({});
-    function recursiveGetPaths(procedures: ProcedureRouterRecord, path = '') {
-      for (const [key, procedureOrRouter] of Object.entries(procedures ?? {})) {
-        const newPath = `${path}${key}`;
-
-        if (isNestedRouter(procedureOrRouter)) {
-          recursiveGetPaths(procedureOrRouter, `${newPath}.`);
-          continue;
-        }
-
-        if (isRouter(procedureOrRouter)) {
-          recursiveGetPaths(procedureOrRouter._def.procedures, `${newPath}.`);
-          continue;
-        }
-
-        if (routerProcedures[newPath]) {
-          throw new Error(`Duplicate key: ${newPath}`);
-        }
-
-        routerProcedures[newPath] = procedureOrRouter;
-      }
-    }
-    recursiveGetPaths(newProcedures);
+    resolver.add(procedures);
 
     const _def: AnyRouterDef<TConfig> = {
       _config: config,
       router: true,
-      procedures: routerProcedures,
+      procedures: resolver.procedures,
       ...emptyRouter,
-      record: newProcedures,
-      queries: Object.entries(routerProcedures)
+      record: resolver.record,
+      queries: Object.entries(resolver.procedures)
         .filter((pair) => (pair[1] as any)._def.query)
         .reduce((acc, [key, val]) => ({ ...acc, [key]: val }), {}),
-      mutations: Object.entries(routerProcedures)
+      mutations: Object.entries(resolver.procedures)
         .filter((pair) => (pair[1] as any)._def.mutation)
         .reduce((acc, [key, val]) => ({ ...acc, [key]: val }), {}),
-      subscriptions: Object.entries(routerProcedures)
+      subscriptions: Object.entries(resolver.procedures)
         .filter((pair) => (pair[1] as any)._def.subscription)
         .reduce((acc, [key, val]) => ({ ...acc, [key]: val }), {}),
+      resolver: resolver,
     };
 
     const router: AnyRouter = {
-      ...newProcedures,
+      ...resolver.record,
       _def,
       createCaller(ctx) {
         const proxy = createRecursiveProxy(({ path, args }) => {
@@ -281,7 +321,8 @@ export function createRouterFactory<TConfig extends AnyRootConfig>(
             procedureTypes.includes(path[0] as ProcedureType)
           ) {
             return callProcedure({
-              procedures: _def.procedures,
+              procedures: _def.resolver.procedures,
+              resolver: _def.resolver,
               path: args[0] as string,
               rawInput: args[1],
               ctx,
@@ -290,7 +331,7 @@ export function createRouterFactory<TConfig extends AnyRootConfig>(
           }
 
           const fullPath = path.join('.');
-          const procedure = _def.procedures[fullPath] as AnyProcedure;
+          const procedure = _def.resolver.procedures[fullPath] as AnyProcedure;
 
           let type: ProcedureType = 'query';
           if (procedure._def.mutation) {
@@ -338,18 +379,21 @@ export function createRouterFactory<TConfig extends AnyRootConfig>(
  * @internal
  */
 export function callProcedure(
-  opts: ProcedureCallOptions & { procedures: ProcedureRouterRecord },
+  opts: ProcedureCallOptions & {
+    procedures: ProcedureRouterRecord;
+    resolver: RouteResolver;
+  },
 ) {
   const { type, path } = opts;
 
-  if (!(path in opts.procedures) || !opts.procedures[path]?._def[type]) {
+  const procedure = opts.resolver.resolve(path);
+
+  if (!procedure._def[type]) {
     throw new TRPCError({
       code: 'NOT_FOUND',
       message: `No "${type}"-procedure on path "${path}"`,
     });
   }
-
-  const procedure = opts.procedures[path] as AnyProcedure;
 
   return procedure(opts);
 }

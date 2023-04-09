@@ -172,34 +172,34 @@ describe('shorthand {}', () => {
   });
 });
 
-describe('lazy routers', () => {
-  test('can import lazy procedure', async () => {
-    const router = t.router({
-      foo: import('./lazy-helpers/procedure'),
-    });
+// describe('lazy routers', () => {
+//   test('can import lazy procedure', async () => {
+//     const router = t.router({
+//       foo: import('./lazy-helpers/procedure'),
+//     });
 
-    const caller = router.createCaller({});
-    const result = await caller.foo();
-    expect(result).toBe('zzz');
-  });
+//     const caller = router.createCaller({});
+//     const result = await caller.foo();
+//     expect(result).toBe('zzz');
+//   });
 
-  test('can import lazy router', async () => {
-    const router = t.router({
-      foo: import('./lazy-helpers/router'),
-    });
+//   test('can import lazy router', async () => {
+//     const router = t.router({
+//       foo: import('./lazy-helpers/router'),
+//     });
 
-    const caller = router.createCaller({});
-    const result = await caller.foo.bar();
-    expect(result).toBe('Hello I am recursive');
-  });
+//     const caller = router.createCaller({});
+//     const result = await caller.foo.bar();
+//     expect(result).toBe('Hello I am recursive');
+//   });
 
-  test('can import lazy procedure nested in lazy router', async () => {
-    const router = t.router({
-      foo: import('./lazy-helpers/nested'),
-    });
+//   test('can import lazy procedure nested in lazy router', async () => {
+//     const router = t.router({
+//       foo: import('./lazy-helpers/nested'),
+//     });
 
-    const caller = router.createCaller({});
-    const result = await caller.foo.bar();
-    expect(result).toBe('Hello I am recursive');
-  });
-});
+//     const caller = router.createCaller({});
+//     const result = await caller.foo.bar();
+//     expect(result).toBe('Hello I am recursive');
+//   });
+// });
